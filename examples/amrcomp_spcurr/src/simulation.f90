@@ -42,7 +42,7 @@ module simulation
    real(WP) :: restart_time
 
    !> Simulation monitoring
-   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,rescfile, capfile !ZM added capfile
+   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,rescfile, capfile
    !> Relaxation-model census (relax_model%acc reduced across ranks for the rescue monitor)
    real(WP) :: diss_n=0.0_WP,diss_m=0.0_WP
    real(WP) :: quad_n=0.0_WP,swap_n=0.0_WP,flr_n=0.0_WP,flr_e=0.0_WP,stuck_n=0.0_WP
@@ -82,7 +82,7 @@ module simulation
    type(amrdata), target :: IBw
    real(WP) :: Xw,Uw
    !> Sponge parameters
-   real(WP) :: R_spg=8.0_WP
+   real(WP) :: R_spg=8.0_WP !ZM no sponge
    real(WP) :: L_spg=1.0_WP
 
    !> Spherical harmonics perturbation parameters
@@ -164,13 +164,10 @@ contains
             bx=mfi%growntilebox(fs%nover)
             do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
                      ! Gas viscosity from Sutherland
-                     !ZM mu_g=(1.0_WP+Suth_T)*min(pTG(i,j,k,1),Tmax_visc)**Suth_n/(Reynolds*(min(pTG(i,j,k,1),Tmax_visc)+Suth_T))
+                     mu_g=(1.0_WP+Suth_T)*min(pTG(i,j,k,1),Tmax_visc)**Suth_n/(Reynolds*(min(pTG(i,j,k,1),Tmax_visc)+Suth_T))
                      ! Liquid viscosity from ratio
-                     !ZM mu_l=visc_ratio*Reynolds**(-1.0_WP)
+                     mu_l=visc_ratio*Reynolds**(-1.0_WP)
                      ! Mixture viscosity
-                     !ZM currently visc both set to zero
-                     mu_g = 1.0_WP / Reynolds
-                     mu_l = mu_g
                      !pVisc(i,j,k,1)=pVF(i,j,k,1)*mu_l+(1.0_WP-pVF(i,j,k,1))*mu_g ! Arithmetic averaging
                      pVisc(i,j,k,1)=1.0_WP/(pVF(i,j,k,1)/max(mu_l,myeps)+(1.0_WP-pVF(i,j,k,1))/max(mu_g,myeps)) ! Harmonic averaging
                      ! Zero bulk viscosity
@@ -245,7 +242,8 @@ contains
                   end if
                   ! Compute local gas state from shock profile
                   x_cc=solver%amr%xlo+(real(i,WP)+0.5_WP)*dx
-                  H=Hshock(x=Xs-x_cc,delta=0.5_WP*dx)
+                  !ZM H=Hshock(x=Xs-x_cc,delta=0.5_WP*dx)
+                  H = 0.0_WP !ZM ensure pre-shock gas state
                   rhoG=rhoG1+(rhoG2-rhoG1)*H
                   pG  =pG1  +(pG2  -pG1  )*H
                   uG  =u1   +(u2   -u1   )*H
@@ -428,11 +426,11 @@ contains
          call param_read('Base ny',amr%ny)
          call param_read('Base nz',amr%nz)
          ! Set domain
-         amr%xlo=-1.0_WP; amr%xhi=+1.0_WP !ZM change domain
+         amr%xlo=-1.0_WP; amr%xhi=+1.0_WP !ZM changed domain
          amr%ylo=-1.0_WP; amr%yhi=+1.0_WP
-         amr%zlo=-10.0_WP; amr%zhi=+10.0_WP
+         amr%zlo=-1.0_WP; amr%zhi=+1.0_WP
          ! Set periodicity
-         amr%xper=.true.; amr%yper=.true.; amr%zper=.true. !ZM set xper true
+         amr%xper=.true.; amr%yper=.true.; amr%zper=.true. !ZM set xper = true
          ! Read in max level
          call param_read('Max level',amr%maxlvl)
          ! Enable quasi-2D
@@ -441,7 +439,6 @@ contains
             amr%zhi=+0.5_WP*(amr%yhi-amr%ylo)/real(amr%ny*2**amr%maxlvl,WP)
          end if
          ! Initialize
-         !! amr%nbloc = 4 !ZM added to change blocking factor for 20x20 cases
          call amr%initialize()
       end block create_amrgrid
 
@@ -464,26 +461,25 @@ contains
          call param_read('Shock location',Xs)
          ! Post-shock normalization: rhoG2=1, Deltau=1, T2=1
          rhoG2=1.0_WP
-         pG2=1.0_WP!ZM/(GammaG*M2**2)
+         pG2=1.0_WP/(GammaG*M2**2)
          ! Quadratic for rhoG1: A*rhoG1^2 - B*rhoG1 + C = 0
          A=2.0_WP*GammaG*pG2+(GammaG-1.0_WP)
          B=4.0_WP*GammaG*pG2+(GammaG+1.0_WP)
          C=2.0_WP*GammaG*pG2
-         !ZM rhoG1=(B-sqrt(B**2-4.0_WP*A*C))/(2.0_WP*A)  ! smaller root for compression
-         rhoG1 = 1.0_WP
+         rhoG1=(B-sqrt(B**2-4.0_WP*A*C))/(2.0_WP*A)  ! smaller root for compression
          ! Shock-fixed frame velocities and pressure
-         !ZM u1=1.0_WP/(1.0_WP-rhoG1)
-         !ZM u2=u1-1.0_WP
-         !ZM pG1=pG2-rhoG1/(1.0_WP-rhoG1)
-         pG1 = 1.0_WP
+         u1=1.0_WP/(1.0_WP-rhoG1)
+         u2=u1-1.0_WP
+         pG1=pG2-rhoG1/(1.0_WP-rhoG1)
          if (pG1.le.0.0_WP) call die('[simulation_init] Cannot achieve requested Mach number - negative pre-shock pressure')
          ! Shock Mach number
          Ms=u1/sqrt(GammaG*pG1/rhoG1)
-         ! Shift to lab frame: pre-shock stationary !ZM spcurr zero velocity everywhere
-         u2=0.0_WP
+         ! Shift to lab frame: pre-shock stationary
+         u2=1.0_WP
          u1=0.0_WP
          ! CvG from T2=1
-         CvG=pG2/(rhoG2*(GammaG-1.0_WP))
+         CvG=pG2/(rhoG2*(GammaG-1.0_WP)) !ZM if only using pre-shock not sure if still correct to use post-shock for EoS
+                                          !ZM might be too many unknows if not tho, CvG and TG "???"
          ! Surface tension (set to 0 for this case)
          call param_read('Weber number',Weber)
          ! Liquid state from density ratio and liquid Mach number
@@ -493,11 +489,9 @@ contains
          !ZM pL1=pG1
          pL1=pG1+4.0_WP/Weber                   ! Force pressure equilibrium, accounting for 3D Laplace pressure
          if (amr%nz.eq.1) pL1=pG1+2.0_WP/Weber  ! Force pressure equilibrium, accounting for 2D Laplace pressure
-         !ZM PinfL=rhoL1/(GammaL*ML**2)-pL1
-         PinfL = 6000.0_WP
+         PinfL=rhoL1/(GammaL*ML**2)-pL1
          ! Pre-shock gas temperature (ideal gas, T = p/((gamma-1)*Cv*rho))
-         !ZM T_G=pG1/(rhoG1*(GammaG-1.0_WP)*CvG)
-         T_G = 1.0_WP
+         T_G=pG1/(rhoG1*(GammaG-1.0_WP)*CvG)
          CvL=(pL1+PinfL)/(rhoL1*(GammaL-1.0_WP)*T_G) ! Force thermal equilibrium
          ! Build materials
          call gas%initialize  (gamma=GammaG,cv=CvG,q=0.0_WP,qp=0.0_WP,name='gas')
@@ -761,7 +755,6 @@ contains
          !ZM trying to add Umag_max to capfile
          integer :: lvl !ZM needed to be added to find Umag_max across all amr levels
 
-
          ! Get solver info and cfl
          call fs%get_info()
          call fs%get_cfl(dt=time%dt,cfl=time%cfl)
@@ -792,15 +785,13 @@ contains
          call mfile%add_column(fs%dPmax,'dPmax')
          call mfile%write()
 
-         !ZM trying to add column for Umag. Try to create capillary file instead
-         !!call mfile%add_column(maxval(Umag), 'Umag')
-         !!call mfile%write()
+         !ZM finding Umag_max and Ca
          Umag_max = 0.0_WP
          do lvl=0,amr%clvl()
             Umag_max = max(Umag_max, Umag%norm0(lvl=lvl,comp=1))
          end do
          Ca_number = Umag_max * Weber / Reynolds
-
+         !ZM creating file
          capfile=monitor(amRoot=amr%amRoot,name='capillary')
          call capfile%add_column(time%n, 'Timestep')
          call capfile%add_column(time%t,'Time')
@@ -927,8 +918,6 @@ contains
       !ZM trying to add Umag_max
       integer :: lvl
 
-
-
       ! Perform time integration
       do while (.not.time%done())
 
@@ -1048,12 +1037,13 @@ contains
          call tfile%write()
          call rescfile%write()
 
+         !ZM added capfile
          Umag_max = 0.0_WP
          do lvl=0,amr%clvl()
             Umag_max = max(Umag_max, Umag%norm0(lvl=lvl,comp=1))
          end do
          Ca_number = Umag_max * Weber / Reynolds
-         call capfile%write() !ZM added capfile
+         call capfile%write()
 
          ! Compute droplet metrics on a safe temporary copy of VF
          call compute_drop_metrics()
