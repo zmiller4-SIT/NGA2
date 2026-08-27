@@ -42,7 +42,7 @@ module simulation
    real(WP) :: restart_time
 
    !> Simulation monitoring
-   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,rescfile
+   type(monitor) :: mfile,consfile,cflfile,gridfile,tfile,rescfile, capfile !ZM added capfile
    !> Relaxation-model census (relax_model%acc reduced across ranks for the rescue monitor)
    real(WP) :: diss_n=0.0_WP,diss_m=0.0_WP
    real(WP) :: quad_n=0.0_WP,swap_n=0.0_WP,flr_n=0.0_WP,flr_e=0.0_WP,stuck_n=0.0_WP
@@ -53,6 +53,7 @@ module simulation
    real(WP) :: drop_massVF001,drop_massVF01                           !< Droplet mass at VF>=0.01 and VF>=0.1 thresholds (smoothed)
    real(WP) :: MOI_xx,MOI_yy,MOI_zz,MOI_xy,MOI_xz,MOI_yz              !< Moment of inertia tensor about VF-weighted COM (VF>=0.1)
    real(WP) :: MOI_xx_001,MOI_yy_001,MOI_zz_001,MOI_xy_001,MOI_xz_001,MOI_yz_001 !< Moment of inertia tensor about VF-weighted COM (VF>=0.01)
+   real(WP) :: Umag_max, Ca_number !ZM trying to output Umag_max for each time step to a monitor file
 
    !> Materials
    type(nasg),      target :: water
@@ -440,6 +441,7 @@ contains
             amr%zhi=+0.5_WP*(amr%yhi-amr%ylo)/real(amr%ny*2**amr%maxlvl,WP)
          end if
          ! Initialize
+         !! amr%nbloc = 4 !ZM added to change blocking factor for 20x20 cases
          call amr%initialize()
       end block create_amrgrid
 
@@ -756,6 +758,10 @@ contains
 
       ! Create monitors
       create_monitors: block
+         !ZM trying to add Umag_max to capfile
+         integer :: lvl !ZM needed to be added to find Umag_max across all amr levels
+
+
          ! Get solver info and cfl
          call fs%get_info()
          call fs%get_cfl(dt=time%dt,cfl=time%cfl)
@@ -785,6 +791,24 @@ contains
          call mfile%add_column(fs%VFint,'VFint')
          call mfile%add_column(fs%dPmax,'dPmax')
          call mfile%write()
+
+         !ZM trying to add column for Umag. Try to create capillary file instead
+         !!call mfile%add_column(maxval(Umag), 'Umag')
+         !!call mfile%write()
+         Umag_max = 0.0_WP
+         do lvl=0,amr%clvl()
+            Umag_max = max(Umag_max, Umag%norm0(lvl=lvl,comp=1))
+         end do
+         Ca_number = Umag_max * Weber / Reynolds
+
+         capfile=monitor(amRoot=amr%amRoot,name='capillary')
+         call capfile%add_column(time%n, 'Timestep')
+         call capfile%add_column(time%t,'Time')
+         call capfile%add_column(time%dt,'dt')
+         call capfile%add_column(Umag_max, 'Umag_max')
+         call capfile%add_column(Ca_number, 'Capillary Number')
+         call capfile%write()
+
          ! Create CFL monitor
          cflfile=monitor(amRoot=amr%amRoot,name='cfl')
          call cflfile%add_column(time%n,'Timestep')
@@ -900,6 +924,10 @@ contains
    !> Perform an NGA2 simulation
    subroutine simulation_run
       implicit none
+      !ZM trying to add Umag_max
+      integer :: lvl
+
+
 
       ! Perform time integration
       do while (.not.time%done())
@@ -1019,6 +1047,13 @@ contains
          call cflfile%write()
          call tfile%write()
          call rescfile%write()
+
+         Umag_max = 0.0_WP
+         do lvl=0,amr%clvl()
+            Umag_max = max(Umag_max, Umag%norm0(lvl=lvl,comp=1))
+         end do
+         Ca_number = Umag_max * Weber / Reynolds
+         call capfile%write() !ZM added capfile
 
          ! Compute droplet metrics on a safe temporary copy of VF
          call compute_drop_metrics()
@@ -1285,6 +1320,7 @@ contains
       call gridfile%finalize()
       call tfile%finalize()
       call rescfile%finalize()
+      call capfile%finalize() !ZM added capfile
    end subroutine simulation_final
 
 end module simulation
