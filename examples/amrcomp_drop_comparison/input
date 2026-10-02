@@ -1,7 +1,7 @@
 # AMR grid
 Base nx:   32
 Base ny:   32
-Base nz:   32
+Base nz:   1
 Max level: 6
 
 # Regridding parameters
@@ -70,6 +70,11 @@ Sutherland temperature: 0.07286
 # SphHarm m:  0  7 -11 15 -5 20 -18 10
 # SphHarm amp: 1e-3 1e-3 1e-3 1e-3 1e-3 1e-3 1e-3 1e-3
 # SphHarm phase: 7.21700E-01  4.83624E+00  3.62682E+00  5.36249E+00  2.91468E+00  5.27352E+00  2.45123E+00  3.82910E+00
+
+# Sponge zone (relaxation toward the undisturbed solution, no viscosity)
+Sponge radius: 3.0
+Sponge length: 1.0
+Sponge rate:   1.0
 
 # Time integration
 Max dt:   1e-3
