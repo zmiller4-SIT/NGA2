@@ -65,7 +65,7 @@ module simulation
    real(WP) :: rhoG1,pG1,u1           !< Pre-shock gas state
    real(WP) :: rhoG2,pG2,u2           !< Post-shock gas state
    real(WP) :: rhoL1,pL1              !< Initial liquid state
-   real(WP) :: M2,Xs                  !< Post-shock Mach and shock location
+   real(WP) :: MG,Xs                  !< Post-shock Mach and shock location !ZM changed M2 to MG
    real(WP) :: Ms                     !< Shock Mach number
    real(WP) :: density_ratio          !< rhoL1/rhoG1
    real(WP) :: ML                     !< Liquid Mach number
@@ -83,6 +83,7 @@ module simulation
    !> Sponge parameters !ZM changed sponge zone
    real(WP) :: R_spg=4.5_WP
    real(WP) :: L_spg=1.5_WP
+   real(WP) :: sig_spg=1.0_WP !ZM parameter to turn sponge off, set to 0 to turn off
 
    !> Spherical harmonics perturbation parameters
    integer :: nsh_modes=0
@@ -96,9 +97,9 @@ module simulation
    real(WP) :: Ducros_tag=huge(1.0_WP)
 
    !ZM parameters for shear layer
-   real(WP) :: alpha
+   real(WP) :: alpha, interface_location
    real(WP), parameter :: pi_val = 4.0_WP * atan(1.0_WP)
-   real(WP) :: U_liq, U_gas
+   real(WP) :: U_liq, U_gas, delta_l, delta_g
 
 contains
 
@@ -113,26 +114,26 @@ contains
       use mathtools, only: spherical_harmonic
       real(WP), dimension(3), intent(in) :: xyz
       real(WP), intent(in) :: t
-      real(WP) :: G,r,theta,phi,perturb, dx !ZM added dx
-      integer :: i, lvl !ZM added lvl
+      real(WP) :: G,r,theta,phi,perturb
+      integer :: i
+      !ZM comment out sphere level set with perturb
       !G=0.5_WP-sqrt((xyz(1)-x_drop)**2+xyz(2)**2+xyz(3)**2)
-      r=sqrt((xyz(1))**2+xyz(2)**2+xyz(3)**2)
-      if (r.gt.1.0e-12_WP) then
-         theta= acos(xyz(3)/r)
-         phi  =atan2(xyz(2),xyz(1))
-      else
-         theta=0.0_WP
-         phi  =0.0_WP
-      end if
+      !!r=sqrt((xyz(1))**2+xyz(2)**2+xyz(3)**2)
+      !!if (r.gt.1.0e-12_WP) then
+         !!theta= acos(xyz(3)/r)
+         !!phi  =atan2(xyz(2),xyz(1))
+      !!else
+         !!theta=0.0_WP
+         !!phi  =0.0_WP
+      !!end if
       ! Compute perturbation
-      perturb=0.0_WP
-      do i=1,nsh_modes
-         perturb=perturb+amp_modes(i)*spherical_harmonic(l_modes(i),m_modes(i),theta,phi+phase_modes(i))
-      end do
-      G=0.5_WP+perturb-r
-      if (amr%nz.eq.1) G=0.5_WP-sqrt((xyz(1))**2+xyz(2)**2) ! Enable quasi-2D runs
-      dx = amr%dx(lvl)
-      G = -xyz(2)+dx/2.0_WP!ZM changed levelset
+      !!perturb=0.0_WP
+      !!do i=1,nsh_modes
+         !!perturb=perturb+amp_modes(i)*spherical_harmonic(l_modes(i),m_modes(i),theta,phi+phase_modes(i))
+      !!end do
+      !!G=0.5_WP+perturb-r
+      !!if (amr%nz.eq.1) G=0.5_WP-sqrt((xyz(1))**2+xyz(2)**2) ! Enable quasi-2D runs
+      G = -xyz(2)+interface_location !ZM changed levelset
    end function sphere_levelset
 
    !> Compute viscosity: Sutherland for gas, VF-weighted blend with liquid
@@ -173,7 +174,7 @@ contains
                      !ZM mu_g=(1.0_WP+Suth_T)*min(pTG(i,j,k,1),Tmax_visc)**Suth_n/(Reynolds*(min(pTG(i,j,k,1),Tmax_visc)+Suth_T))
                      ! Liquid viscosity from ratio
                      !ZM mu_l=visc_ratio*Reynolds**(-1.0_WP)
-                     mu_g = density_ratio / Reynolds !ZM changed visc, this is with Ug, deltaG, and rhoL all = 1
+                     mu_g = rhoG1 * U_gas * delta_g / Reynolds !ZM changed visc
                      mu_l = mu_g / visc_ratio
                      ! Mixture viscosity
                      !pVisc(i,j,k,1)=pVF(i,j,k,1)*mu_l+(1.0_WP-pVF(i,j,k,1))*mu_g ! Arithmetic averaging
@@ -186,21 +187,97 @@ contains
                      ! Run with no heat transfer
                      pDiffG(i,j,k,1)=0.0_WP
                      pDiffL(i,j,k,1)=0.0_WP
+                     !ZM trying to implement apply_sponge, nudge to free stream instead of viscosity based sponge
                      ! Apply sponge layer viscosity !ZM might want to change r_spg if moving to 3D case
-                     r_cyl=sqrt((amr%ylo+(real(j,WP)+0.5_WP)*amr%dy(lvl))**2+(amr%zlo+(real(k,WP)+0.5_WP)*amr%dz(lvl))**2)
-                     if (amr%nz.eq.1) r_cyl=sqrt((amr%ylo+(real(j,WP)+0.5_WP)*amr%dy(lvl))**2) ! Enable quasi-2D runs
-                     if (r_cyl.gt.R_spg) then
-                        blend=min((r_cyl-R_spg)/L_spg,1.0_WP)**2
-                        mu_spg=nu_spg/(pVF(i,j,k,1)/max(pRHOL(i,j,k,1),myeps)+(1.0_WP-pVF(i,j,k,1))/max(pRHOG(i,j,k,1),myeps))
-                        pVisc(i,j,k,1)=max(pVisc(i,j,k,1),blend*mu_spg)
+                     !! r_cyl=sqrt((amr%ylo+(real(j,WP)+0.5_WP)*amr%dy(lvl))**2+(amr%zlo+(real(k,WP)+0.5_WP)*amr%dz(lvl))**2)
+                     !! if (amr%nz.eq.1) r_cyl=sqrt((amr%ylo+(real(j,WP)+0.5_WP)*amr%dy(lvl))**2) ! Enable quasi-2D runs
+                     !! if (r_cyl.gt.R_spg) then
+                        !! blend=min((r_cyl-R_spg)/L_spg,1.0_WP)**2
+                        !! mu_spg=nu_spg/(pVF(i,j,k,1)/max(pRHOL(i,j,k,1),myeps)+(1.0_WP-pVF(i,j,k,1))/max(pRHOG(i,j,k,1),myeps))
+                        !! pVisc(i,j,k,1)=max(pVisc(i,j,k,1),blend*mu_spg)
                         ! pDiffL(i,j,k,1)=max(pDiffL(i,j,k,1),Cdiff*blend*mu_spg)
                         ! pDiffG(i,j,k,1)=max(pDiffG(i,j,k,1),Cdiff*blend*mu_spg)
-                     end if
+                     !! end if
                   end do; end do; end do
          end do
          call amr%mfiter_destroy(mfi)
       end do
    end subroutine get_viscosities
+
+   !ZM adding apply_sponge subroutine from amrcomp_drop_comparison from chases amrcomp_paper branch
+   !> Sponge zone: relax the gas state toward the undisturbed solution outside r=R_spg.
+   !> The bow shock is the deviation from that state, so this is what absorbs it. Damping
+   !> is a rate rather than a viscosity, integrated exactly over dt, so it is stable for
+   !> any timestep and contributes nothing to the CFL.
+   !ZM sponge zone from compressible_shear_layer example is more applicable for liq and water
+   !ZM but it is not implemented with amr, so have to do a combination of comparison and shear_layer
+   subroutine apply_sponge
+      use amrex_amr_module, only: amrex_mfiter, amrex_box
+      integer :: lvl, i, j, k
+      type(amrex_mfiter) :: mfi
+      type(amrex_box) :: bx
+      real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ
+      real(WP) :: r_cyl,blend,x_cc,rho,p,u
+      real(WP), parameter :: VF_spg=1.0e-6_WP ! Below this VF a cell is treated as pure gas
+      real(WP) :: swt_top, swt_btm, psponge, rhos, us, vs, ws, Espg, y_cc
+      ! Nothing to do if the sponge is off
+      if (sig_spg.le.0.0_WP) return
+      ! Loop over levels
+      do lvl=0,amr%clvl()
+         ! Loop over domain
+         call amr%mfiter_build(lvl,mfi)
+         do while (mfi%next())
+            ! Get pointer to data
+            pQ=>fs%Q%mf(lvl)%dataptr(mfi)
+            ! Get tilebox
+            bx=mfi%tilebox()
+            do k=bx%lo(3),bx%hi(3); do j=bx%lo(2),bx%hi(2); do i=bx%lo(1),bx%hi(1)
+               !ZM only implementign 2D sponge for now, Barbeau and Lele dont have 3D cases
+               y_cc = amr%ylo + (real(j,WP)+0.5_WP)*amr%dy(lvl)
+               if (y_cc .ge. R_spg) then !ZM gas sponge zone
+                  !ZM Get sponge solution
+                  psponge = pG1
+                  rhos = rhoG1
+                  us = U_gas; ws = 0.0_WP; vs = 0.0_WP
+                  Espg = rhos * gas%get_e_from_p_rho(p=psponge,rho=rhos,y=[1.0_WP])
+                  swt_top = min(1.0_WP, max(0.0_WP, (y_cc - r_spg) / L_spg))**2
+                  ! Apply changes to variables
+                  !ZM for ref: Q=(VF*rhoL, (1-VF)*rhoG, VF*rhoL*IL, (1-VF)*rhoG*IG, rho_mix*U, 0, 0)
+                  !ZM setting gas propertes
+                  pQ(i,j,k,2)=pQ(i,j,k,2)+swt_top*(rhos-pQ(i,j,k,2)) ! gas mass
+                  pQ(i,j,k,4)=pQ(i,j,k,4)+swt_top*(Espg-pQ(i,j,k,4)) ! gas energy
+                  pQ(i,j,k,5)=pQ(i,j,k,5)+swt_top*(rhos*us-pQ(i,j,k,5)) ! x-momentum
+                  pQ(i,j,k,6)=pQ(i,j,k,6)-swt_top*pQ(i,j,k,6) ! y-momentum
+                  pQ(i,j,k,7)=pQ(i,j,k,7)-swt_top*pQ(i,j,k,7) ! z-momentum
+                  !ZM remove liquid
+                  pQ(i,j,k,1)=pQ(i,j,k,1)-swt_top*pQ(i,j,k,1) ! liquid mass
+                  pQ(i,j,k,3)=pQ(i,j,k,3)-swt_top*pQ(i,j,k,3) ! liquid energy
+                  !!!ZM do related quantities need to be updated? (rho, u, v, w) (pressure?)
+                  !!!ZM amrcomp_drop sponge only updates conserved variables, so might not need to
+               end if
+               if (y_cc .le. -R_spg) then !ZM liquid sponge zone
+                  psponge = pL1
+                  rhos = rhoL1
+                  us = -U_liq; ws = 0.0_WP; vs = 0.0_WP
+                  Espg = rhos * water%get_e_from_p_rho(p=psponge,rho=rhos,y=[1.0_WP])
+                  swt_btm = min(1.0_WP, max(0.0_WP, (-y_cc - r_spg) / L_spg))**2
+                  ! Apply changes to variables
+                  !ZM setting liquid propertes
+                  pQ(i,j,k,1)=pQ(i,j,k,1)+swt_btm*(rhos-pQ(i,j,k,1)) ! liquid mass
+                  pQ(i,j,k,3)=pQ(i,j,k,3)+swt_btm*(Espg-pQ(i,j,k,3)) ! liquid energy
+                  pQ(i,j,k,5)=pQ(i,j,k,5)+swt_btm*(rhos*us-pQ(i,j,k,5)) ! x-momentum
+                  pQ(i,j,k,6)=pQ(i,j,k,6)-swt_btm*pQ(i,j,k,6) ! y-momentum
+                  pQ(i,j,k,7)=pQ(i,j,k,7)-swt_btm*pQ(i,j,k,7) ! z-momentum
+                  !ZM remove gas(?)
+                  pQ(i,j,k,2)=pQ(i,j,k,2)-swt_btm*pQ(i,j,k,2) ! gas mass
+                  pQ(i,j,k,4)=pQ(i,j,k,4)-swt_btm*pQ(i,j,k,4) ! gas energy
+               end if
+                  end do; end do; end do
+         end do
+         call amr%mfiter_destroy(mfi)
+      end do
+   end subroutine apply_sponge
+
 
    !> User init callback - set Q and VF/barycenters for a drop at rest with a shock
    subroutine shockdrop_init(solver,lvl,time,ba,dm)
@@ -217,7 +294,8 @@ contains
       type(amrex_box) :: bx
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF,pCL,pCG
       real(WP), dimension(3) :: BL,BG
-      real(WP) :: dx,dy,dz,myVF,IEL,x_cc,rhoG,pG,uG,H, y_cc !ZM added y_cc for U(y)
+      real(WP) :: dx,dy,dz,myVF,IEL,x_cc,rhoG,pG,uG,H
+      real(WP) :: y_cc !ZM added for U(y)
       integer :: i,j,k
       integer, parameter :: nref=3
       ! Get mesh size
@@ -255,14 +333,14 @@ contains
                   rhoG=rhoG1+(rhoG2-rhoG1)*H
                   pG  =pG1  +(pG2  -pG1  )*H
                   !ZM uG  =u1   +(u2   -u1   )*H
-
-                  y_cc = solver%amr%ylo+(real(j,WP)+0.5_WP)*dy !ZM velocity profile using cell center location
-                  if (y_cc .gt. dx/2.0_WP) then
-                     uG = U_gas * erf(y_cc)!ZM + dx/2.0_WP
-                  else if (y_cc .lt. dx/2.0_WP) then
-                     uG = U_liq * erf(y_cc)!ZM + dx/2.0_WP
+                  
+                  !ZM velocity profile using cell center location
+                  !!!ZM I think after debugging sponge could update this with average velocity over cell
+                  y_cc = solver%amr%ylo+(real(j,WP)+0.5_WP)*dy
+                  if (y_cc .ge. interface_location) then
+                     uG = U_gas * erf((y_cc-interface_location)/delta_l)
                   else
-                     uG = 0.0_WP
+                     uG = U_liq * erf((y_cc-interface_location)/delta_g)
                   end if
 
                   ! Set conserved variables: Q=(VF*rhoL, (1-VF)*rhoG, VF*rhoL*IL, (1-VF)*rhoG*IG, rho_mix*U, 0, 0)
@@ -437,6 +515,7 @@ contains
 
       ! Initialize AMR grid
       create_amrgrid: block
+         real(WP) :: dy !ZM adding dy for interface loction calculation
          ! Set name
          amr%name='amrcomp_drop'
          ! Read in base grid size
@@ -445,7 +524,8 @@ contains
          call param_read('Base nz',amr%nz)
          call param_read('wavenumber', alpha) !ZM added param read for wavenumber
          ! Set domain !ZM changed domain
-         !ZM amr%xlo=-pi_val / alpha; amr%xhi=+pi_val / alpha        !ZM might have problems with grid size being cube, and blockign factor of 8
+         !ZM amr%xlo=-pi_val / alpha; amr%xhi=+pi_val / alpha     !!!ZM might have problems with grid size being cube, and blockign factor of 8
+                                                                  !!!ZM I think it will be fine can make Ly multiple of pi
          amr%xlo=-6.0_WP; amr%xhi=+6.0_WP            !ZM just use -6 to 6 for now to test IC and BC
          amr%ylo=-6.0_WP; amr%yhi=+6.0_WP
          amr%zlo=-10.0_WP; amr%zhi=+10.0_WP
@@ -460,6 +540,11 @@ contains
          end if
          ! Initialize
          call amr%initialize()
+
+         !ZM add to read interface option. If not specified default is dy/2
+         dy = (amr%yhi - amr%ylo) / (amr%ny * 2.0_WP**amr%maxlvl)
+         call param_read('interface location',interface_location,default=dy/2.0_WP)
+
       end block create_amrgrid
 
       ! Read EoS and flow parameters
@@ -477,40 +562,43 @@ contains
          ! Liquid EoS: gamma only, PinfL is computed below
          call param_read('GammaL',GammaL)
          ! Shock parameters (gas phase, uses GammaG)
-         call param_read('Gas Mach number',M2)
+         call param_read('Gas Mach number',MG)
          call param_read('Shock location',Xs)
          ! Post-shock normalization: rhoG2=1, Deltau=1, T2=1
          rhoG2=1.0_WP
-         pG2=1.0_WP/(GammaG*M2**2)
+         pG2=1.0_WP/(GammaG*MG**2)
          ! Quadratic for rhoG1: A*rhoG1^2 - B*rhoG1 + C = 0
          A=2.0_WP*GammaG*pG2+(GammaG-1.0_WP)
          B=4.0_WP*GammaG*pG2+(GammaG+1.0_WP)
          C=2.0_WP*GammaG*pG2
          !ZM rhoG1=(B-sqrt(B**2-4.0_WP*A*C))/(2.0_WP*A)  ! smaller root for compression
          call param_read('Density ratio',density_ratio)
-         rhoG1 = density_ratio
+         call param_read('liquid density', rhoL1)
+         rhoG1 = rhoL1 * density_ratio
          ! Shock-fixed frame velocities and pressure
-         u1=1.0_WP/(1.0_WP-rhoG1)
-         u2=u1-1.0_WP
-         !ZM pG1=pG2-rhoG1/(1.0_WP-rhoG1)
-         pG1 = 1.0_WP
+         !! u1=1.0_WP/(1.0_WP-rhoG1)
+         !! u2=u1-1.0_WP
+         !! pG1=pG2-rhoG1/(1.0_WP-rhoG1)
+         !ZM get ambient pressure and gas velocity
+         call param_read('ambient pressure',pG1)
+         U_gas = MG * sqrt(pG1*GammaG/rhoG1)
          if (pG1.le.0.0_WP) call die('[simulation_init] Cannot achieve requested Mach number - negative pre-shock pressure')
          ! Shock Mach number
          Ms=u1/sqrt(GammaG*pG1/rhoG1)
          ! Shift to lab frame: pre-shock stationary
-         u2=1.0_WP
-         u1=0.0_WP
-
-         call param_read('Viscosity ratio',visc_ratio) !ZM adding freestream velocity
-         U_gas = 1.0_WP
-         U_liq = visc_ratio * U_gas
+         !ZM u2=1.0_WP
+         !ZM u1=0.0_WP
+         call param_read('Viscosity ratio',visc_ratio)
+         !ZM reading velocity profile parameters from input file
+         call param_read('delta g',delta_g)
+         call param_read('delta l',delta_l)
+         U_liq = visc_ratio * U_gas * delta_l / delta_g
          ! CvG from T2=1
          CvG=pG1/(rhoG1*(GammaG-1.0_WP)) !ZM chnaged from calc from state 2 to 1
-         ! Surface tension (set to 0 for this case)
+         ! Surface tension
          call param_read('Weber number',Weber)
          ! Liquid state from density ratio and liquid Mach number
          call param_read('Liquid Mach number',ML)
-         rhoL1= rhoG1 / density_ratio !ZM changed
          pL1=pG1
          ! pL1=pG1+4.0_WP/Weber                   ! Force pressure equilibrium, accounting for 3D Laplace pressure
          ! if (amr%nz.eq.1) pL1=pG1+2.0_WP/Weber  ! Force pressure equilibrium, accounting for 2D Laplace pressure
@@ -531,7 +619,7 @@ contains
          call param_read('Sutherland exponent',Suth_n)
          call param_read('Sutherland temperature',Suth_T)
          ! Log
-         write(message,'("[Post-shock Mach] M2=",es12.5)') M2; call log(message)
+         write(message,'("[Gas Mach] MG=",es12.5)') MG; call log(message)
          write(message,'("[Shock Mach]      Ms=",es12.5)') Ms; call log(message)
          write(message,'("[Pre-shock]  rhoG1=",es12.5," pG1=",es12.5)') rhoG1,pG1; call log(message)
          write(message,'("[Post-shock] rhoG2=",es12.5," pG2=",es12.5)') rhoG2,pG2; call log(message)
@@ -629,8 +717,13 @@ contains
          use amrdata_class,    only: interp_face_lin
          ! Assign materials and create flow solver
          fs%liq=>water; fs%gas=>gas; call fs%initialize(amr=amr,name='drop')
-         ! Set surface tension coefficient !ZM currently with Ug and deltaG = 1
-         fs%sigma=rhoG1/Weber!ZM ; fs%sigma=0.0_WP
+         ! Set surface tension coefficient
+         if (Weber .ge. 1.0e10_WP) then
+            fs%sigma = 0.0_WP
+         else  
+            fs%sigma=(rhoG1 * (U_gas**2) * delta_g) / Weber !ZM ; fs%sigma=0.0_WP
+         end if
+            print *, 'ST coeff', fs%sigma
          ! Use face-linear interp if 2D (divfree requires ratio=2 in all dirs)
          if (amr%nz.eq.1) fs%interp_vel=interp_face_lin
          ! Provide pressure relaxation model
@@ -953,6 +1046,7 @@ contains
          call fs%get_dQdt(dQdt=dQdt,dt=0.5_WP*time%dt,time=time%tmid)
          call fs%Q%lincomb(a=1.0_WP,src1=fs%Qold,b=0.5_WP*time%dt,src2=dQdt)
          !ZMspg this is where apply_sponge subroutine is in the amrcomp_drop_comparison example is
+         call apply_sponge() !ZM added apply sponge
          call fs%Q%average_down(); call fs%Q%fill(time=time%tmid)
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)
@@ -979,6 +1073,7 @@ contains
          call fs%get_dQdt(dQdt=dQdt,dt=time%dt,time=time%t)
          call fs%Q%lincomb(a=1.0_WP,src1=fs%Qold,b=time%dt,src2=dQdt)
          !ZMspg this is where apply_sponge subroutine is in the amrcomp_drop_comparison example is
+         call apply_sponge()
          call fs%Q%average_down(); call fs%Q%fill(time=time%t)
          ! Rebuild PLIC
          call fs%build_plic(time=time%t)

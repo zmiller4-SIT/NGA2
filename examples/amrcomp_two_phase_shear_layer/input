@@ -1,23 +1,29 @@
 # AMR grid
-Base nx:   64                 # need to figure out what to set these to
-Base ny:   64
+Base nx:   128       # need to figure out what to set these to
+Base ny:   128
 Base nz:   1
 Max level: 0
 
 # Time integration
-Max dt:   4.12e-3                   # update
-Max CFL:  0.45
+Max dt:   2.30777e-4         # update
+Max CFL:  0.4
 Max time: 100
 
 # Output
-Output period:     1e-2                        # update
+Output period:     5e-3          # update
 PLIC Output period: 1e-1
 tau Output period:  2.8775   ! This is 11.51/4
 Checkpoint period: 1
 Max wall time:     !14400    ! IN SECONDS
 Restart from:      !restart/drop_6.00000E+00
 
+# shear layer parameters
 wavenumber:   0.5
+delta g:      1
+delta l:      1
+ambient pressure: 1
+liquid density:   1
+# interface location: 1 ! if not specified defualt is dy/2
 
 ###########################################
 ##### CONDITIONS FOR PARZIALE Ms=5.12 #####
@@ -25,17 +31,18 @@ wavenumber:   0.5
 # Gammas
 GammaG: 1.4
 GammaL: 4.4
-PinfL:  78.45
+PinfL:  6000
 # Shock parameters
-Gas Mach number: 1.967391
+Gas Mach number: 0.6
 Shock location: -0.6
 # Liquid state
-Density ratio:      0.1
+Density ratio:      0.001
 Liquid Mach number: 1.005572
 # Surface tension #ZM gas Weber number
-Weber number:       1000
+# Weber number:       2250
+Weber number:       1e30 ! flag if greater than 1e10 to set to 0
 # Viscous parameters #ZM gas Reynolds number
-Reynolds number:    2000
+Reynolds number:    3000
 Prandtl number:     0.71
 Viscosity ratio:    0.99
 Diffusivity ratio:  7.996515
