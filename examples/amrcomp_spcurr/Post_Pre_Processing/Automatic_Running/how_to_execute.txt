@@ -1,0 +1,13 @@
+# make the script executable
+chmod +x run_all_cases.sh
+
+# make sure the following files are in the same folder
+# 1) NGA2 executable
+# 2) input
+# 3) cases.csv
+# 4) run_all_cases.sh
+
+
+# run the script
+./run_all_cases.sh
+
