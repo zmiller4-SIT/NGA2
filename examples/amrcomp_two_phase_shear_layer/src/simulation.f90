@@ -77,14 +77,6 @@ module simulation
    real(WP) :: Suth_n=1.5_WP          !< Sutherland exponent (1.0 for constant)
    real(WP) :: Suth_T=0.4042_WP       !< Sutherland temperature (0.0 for constant)
 
-   !> Moving wall model
-   type(amrdata), target :: IBw
-   real(WP) :: Xw,Uw
-   !> Sponge parameters !ZM changed sponge zone
-   real(WP) :: R_spg=4.5_WP
-   real(WP) :: L_spg=1.5_WP
-   real(WP) :: sig_spg=1.0_WP !ZM parameter to turn sponge off, set to 0 to turn off
-
    !> Spherical harmonics perturbation parameters
    integer :: nsh_modes=0
    integer , dimension(:), allocatable :: l_modes,m_modes
@@ -97,9 +89,17 @@ module simulation
    real(WP) :: Ducros_tag=huge(1.0_WP)
 
    !ZM parameters for shear layer
-   real(WP) :: alpha, interface_location
+   real(WP) :: alpha, interface_location, perturb_amp
    real(WP), parameter :: pi_val = 4.0_WP * atan(1.0_WP)
    real(WP) :: U_liq, U_gas, delta_l, delta_g
+
+   !> Moving wall model
+   type(amrdata), target :: IBw
+   real(WP) :: Xw,Uw
+   !> Sponge parameters !ZM changed sponge zone
+   real(WP) :: R_spg=3.0_WP * pi_val - 1.5_WP
+   real(WP) :: L_spg=1.5_WP
+   real(WP) :: sig_spg=1.0_WP !ZM parameter to turn sponge off, set to 0 to turn off
 
 contains
 
@@ -133,7 +133,8 @@ contains
       !!end do
       !!G=0.5_WP+perturb-r
       !!if (amr%nz.eq.1) G=0.5_WP-sqrt((xyz(1))**2+xyz(2)**2) ! Enable quasi-2D runs
-      G = -xyz(2)+interface_location !ZM changed levelset
+      !!! add multimode or random perturbations
+      G = -xyz(2)+interface_location + perturb_amp*sin(alpha*xyz(1)) !ZM changed levelset
    end function sphere_levelset
 
    !> Compute viscosity: Sutherland for gas, VF-weighted blend with liquid
@@ -252,8 +253,9 @@ contains
                   !ZM remove liquid
                   pQ(i,j,k,1)=pQ(i,j,k,1)-swt_top*pQ(i,j,k,1) ! liquid mass
                   pQ(i,j,k,3)=pQ(i,j,k,3)-swt_top*pQ(i,j,k,3) ! liquid energy
-                  !!!ZM do related quantities need to be updated? (rho, u, v, w) (pressure?)
-                  !!!ZM amrcomp_drop sponge only updates conserved variables, so might not need to
+                  !!ZM do related quantities need to be updated? (rho, u, v, w) (pressure?)
+                  !!ZM amrcomp_drop sponge only updates conserved variables, so might not need to
+                  !ZM have videos of sponge working well in perturb1, I think fine not to update
                end if
                if (y_cc .le. -R_spg) then !ZM liquid sponge zone
                   psponge = pL1
@@ -295,7 +297,7 @@ contains
       real(WP), dimension(:,:,:,:), contiguous, pointer :: pQ,pVF,pCL,pCG
       real(WP), dimension(3) :: BL,BG
       real(WP) :: dx,dy,dz,myVF,IEL,x_cc,rhoG,pG,uG,H
-      real(WP) :: y_cc !ZM added for U(y)
+      real(WP) :: y_cc, lo_bound, hi_bound, integral_hi, integral_lo, delta_branch, U_branch !ZM added for U(y)
       integer :: i,j,k
       integer, parameter :: nref=3
       ! Get mesh size
@@ -334,14 +336,38 @@ contains
                   pG  =pG1  +(pG2  -pG1  )*H
                   !ZM uG  =u1   +(u2   -u1   )*H
                   
+                  y_cc = solver%amr%ylo+(real(j,WP)+0.5_WP)*dy ! used for both cell center and average
+
                   !ZM velocity profile using cell center location
-                  !!!ZM I think after debugging sponge could update this with average velocity over cell
-                  y_cc = solver%amr%ylo+(real(j,WP)+0.5_WP)*dy
+                  !!if (y_cc .ge. interface_location) then
+                     !!uG = U_gas * erf((y_cc-interface_location)/delta_l)
+                  !!else
+                     !!uG = U_liq * erf((y_cc-interface_location)/delta_g)
+                  !!end if
+
+                  !ZM velocity profile using average of erf over cell stored at cell center
+                  !ZM this is old, same equation but assumed delta = 1, above if updated with any delta
+                  !!lo_bound = solver%amr%ylo+(real(j,WP))*dy - interface_location ! cell bottom in y minus interface location
+                  !!hi_bound = solver%amr%ylo+(real(j,WP)+1.0_WP)*dy - interface_location ! cell top in y minus interface location
+                  !!integral_hi = (hi_bound)*erf(hi_bound)+exp(-(hi_bound**2.0_WP))/sqrt(pi_val)
+                  !!integral_lo = (lo_bound)*erf(lo_bound)+exp(-(lo_bound**2.0_WP))/sqrt(pi_val)
+                  !!if (y_cc .ge. interface_location) then
+                     !!uG = (U_gas / (hi_bound - lo_bound)) * (integral_hi - integral_lo)
+                  !!else
+                     !!uG = (U_liq / (hi_bound - lo_bound)) * (integral_hi - integral_lo)
+                  !!end if
+
+                  !ZM velocity profile using average of erf over cell stored at cell center
                   if (y_cc .ge. interface_location) then
-                     uG = U_gas * erf((y_cc-interface_location)/delta_l)
+                     U_branch = U_gas;  delta_branch = delta_g
                   else
-                     uG = U_liq * erf((y_cc-interface_location)/delta_g)
+                     U_branch = U_liq;  delta_branch = delta_l
                   end if
+                  lo_bound = (solver%amr%ylo + real(j,WP)*dy          - interface_location) / delta_branch
+                  hi_bound = (solver%amr%ylo + (real(j,WP)+1.0_WP)*dy - interface_location) / delta_branch
+                  integral_hi = (hi_bound)*erf(hi_bound)+exp(-(hi_bound**2.0_WP))/sqrt(pi_val)
+                  integral_lo = (lo_bound)*erf(lo_bound)+exp(-(lo_bound**2.0_WP))/sqrt(pi_val)
+                  uG = (U_branch / (hi_bound - lo_bound)) * (integral_hi - integral_lo)
 
                   ! Set conserved variables: Q=(VF*rhoL, (1-VF)*rhoG, VF*rhoL*IL, (1-VF)*rhoG*IG, rho_mix*U, 0, 0)
                   pQ(i,j,k,1)=(       myVF)*rhoL1
@@ -515,19 +541,24 @@ contains
 
       ! Initialize AMR grid
       create_amrgrid: block
-         real(WP) :: dy !ZM adding dy for interface loction calculation
+         !ZM trying to add values written in log file
+         use messager, only: log
+         use string,   only: str_long
+         character(len=str_long) :: message
+         
+         real(WP) :: dy, dx !ZM adding dy for interface loction calculation
+         integer :: num_periods !ZM for domain setting
          ! Set name
          amr%name='amrcomp_drop'
          ! Read in base grid size
+         call param_read('alpha', alpha) !ZM added param read for wavenumber
+         call param_read('num_periods', num_periods)
          call param_read('Base nx',amr%nx)
-         call param_read('Base ny',amr%ny)
+         call param_read('Base ny',amr%ny, default=nint(3.0_WP * alpha * amr%nx / num_periods)) !ZM
          call param_read('Base nz',amr%nz)
-         call param_read('wavenumber', alpha) !ZM added param read for wavenumber
          ! Set domain !ZM changed domain
-         !ZM amr%xlo=-pi_val / alpha; amr%xhi=+pi_val / alpha     !!!ZM might have problems with grid size being cube, and blockign factor of 8
-                                                                  !!!ZM I think it will be fine can make Ly multiple of pi
-         amr%xlo=-6.0_WP; amr%xhi=+6.0_WP            !ZM just use -6 to 6 for now to test IC and BC
-         amr%ylo=-6.0_WP; amr%yhi=+6.0_WP
+         amr%xlo=-num_periods * pi_val / alpha; amr%xhi=+ num_periods * pi_val / alpha
+         amr%ylo=-3.0_WP * pi_val; amr%yhi=+3.0_WP * pi_val
          amr%zlo=-10.0_WP; amr%zhi=+10.0_WP
          ! Set periodicity
          amr%xper=.true.; amr%yper=.false.; amr%zper=.true. !ZM changed BC
@@ -543,7 +574,16 @@ contains
 
          !ZM add to read interface option. If not specified default is dy/2
          dy = (amr%yhi - amr%ylo) / (amr%ny * 2.0_WP**amr%maxlvl)
+         dx = (amr%xhi - amr%xlo) / (amr%nx * 2.0_WP**amr%maxlvl)
          call param_read('interface location',interface_location,default=dy/2.0_WP)
+
+         !ZM checkign to make sure dy and dx match
+         !!print *, 'dy', dy
+         !!print *, 'dx', dx
+
+         !ZM log grid info
+         write(message,'("[Grid] nx=",i0," ny=",i0," nz=",i0," maxlvl=",i0)') amr%nx,amr%ny,amr%nz,amr%maxlvl; call log(message)
+         write(message,'("[Grid] dx=",es12.5," dy=",es12.5)') dx,dy; call log(message)
 
       end block create_amrgrid
 
@@ -592,7 +632,11 @@ contains
          !ZM reading velocity profile parameters from input file
          call param_read('delta g',delta_g)
          call param_read('delta l',delta_l)
-         U_liq = visc_ratio * U_gas * delta_l / delta_g
+
+         ! default perturb amplitude set to 10% delta_g
+         call param_read('Amplitude', perturb_amp,default=delta_g*0.1_WP)
+         
+         U_liq = visc_ratio * U_gas * delta_l / delta_g !ZM note value is not negative here
          ! CvG from T2=1
          CvG=pG1/(rhoG1*(GammaG-1.0_WP)) !ZM chnaged from calc from state 2 to 1
          ! Surface tension
@@ -628,6 +672,9 @@ contains
          call water%print(); call gas%print()
          write(message,'("[Visc]   Re=",es12.5," mu*=",es12.5," Suth_n=",es12.5," Suth_T=",es12.5)') Reynolds,visc_ratio,Suth_n,Suth_T; call log(message)
          write(message,'("[Surface tension] We=",es12.5)') fs%sigma; call log(message)
+         !ZM adding to log file for easy tracking
+         write(message,'("[Amplitude] A=",es12.5)') perturb_amp; call log(message)
+         write(message,'("[Interface_Location] Interface_Location=",es12.5)') interface_location; call log(message)
       end block init_eos_and_flow
 
       initialize_sph_modes: block
@@ -723,7 +770,7 @@ contains
          else  
             fs%sigma=(rhoG1 * (U_gas**2) * delta_g) / Weber !ZM ; fs%sigma=0.0_WP
          end if
-            print *, 'ST coeff', fs%sigma
+
          ! Use face-linear interp if 2D (divfree requires ratio=2 in all dirs)
          if (amr%nz.eq.1) fs%interp_vel=interp_face_lin
          ! Provide pressure relaxation model
@@ -759,13 +806,14 @@ contains
       end block create_solver
 
       ! Create IB data
-      create_IB: block
-         use amrdata_class, only: interp_reinit
-         call param_read('Wall location',Xw,default=-10.0_WP)
-         call param_read('Wall velocity',Uw,default=0.0_WP)
-         call IBw%initialize(amr,name='IBw',ncomp=1,ng=fs%nover,interp=interp_reinit); call IBw%register()
-         IBw%user_init=>set_IBw
-      end block create_IB
+      !ZM can just remove IB block
+      !! create_IB: block
+         !! use amrdata_class, only: interp_reinit
+         !! call param_read('Wall location',Xw,default=-1.0e10_WP)
+         !! call param_read('Wall velocity',Uw,default=0.0_WP)
+         !! call IBw%initialize(amr,name='IBw',ncomp=1,ng=fs%nover,interp=interp_reinit); call IBw%register()
+         !! IBw%user_init=>set_IBw
+      !! end block create_IB
 
       ! Initialize workspaces
       create_workspace: block
@@ -803,7 +851,8 @@ contains
             ! Initialize primitive variables
             call fs%get_primitive(Q=fs%Q)
             ! Initialize face velocities
-            call fs%get_face_velocity()
+            call fs%get_face_velocity(dt=time%dt) !ZM had to add (dt=time%dt) argument to get_face_velocity?
+                                                    !ZM never had issue compiling before?
             call fs%average_down_velocity(); call fs%fill_velocity(time=time%t)
          end if
          ! Compute viscosities
@@ -1056,7 +1105,8 @@ contains
          ! Rebuild sub-cell VF
          call fs%build_subVF()
          ! Compute face velocities and ensure C/F consistency
-         call fs%get_face_velocity(); call fs%average_down_velocity()
+         call fs%get_face_velocity(dt=time%dt); call fs%average_down_velocity() !ZM had to add (dt=time%dt) argument to get_face_velocity?
+                                                                                 !ZM never had issue compiling before?
          ! Add pressure term
          call fs%add_phasic_pressure(scale=0.5_WP*time%dt,mask=IBw)
          ! Add surface tension term
@@ -1083,7 +1133,8 @@ contains
          ! Rebuild sub-cell VF
          call fs%build_subVF()
          ! Compute face velocities and ensure C/F consistency
-         call fs%get_face_velocity(); call fs%average_down_velocity()
+         call fs%get_face_velocity(dt=time%dt); call fs%average_down_velocity() !ZM had to add (dt=time%dt) argument to get_face_velocity?
+                                                                                 !ZM never had issue compiling before?
          ! Add pressure term
          call fs%add_phasic_pressure(scale=time%dt,mask=IBw)
          ! Add surface tension term

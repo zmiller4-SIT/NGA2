@@ -1,29 +1,31 @@
 # AMR grid
-Base nx:   128       # need to figure out what to set these to
-Base ny:   128
+Base nx:   256   # has to be even number for ny to match
+# Base ny:   64  # calculate ny from nx to have cube (uses default, can override)
 Base nz:   1
 Max level: 0
 
 # Time integration
-Max dt:   2.30777e-4         # update
-Max CFL:  0.4
-Max time: 100
+Max dt:   1.10725e-4         # update
+Max CFL:  0.25
+Max time: 5
 
 # Output
-Output period:     5e-3          # update
-PLIC Output period: 1e-1
+Output period:     1e-2          # update
+PLIC Output period: 1e-2
 tau Output period:  2.8775   ! This is 11.51/4
 Checkpoint period: 1
 Max wall time:     !14400    ! IN SECONDS
-Restart from:      !restart/drop_6.00000E+00
+Restart from:      ! restart/drop_2.00007E+00
 
 # shear layer parameters
-wavenumber:   0.5
+alpha:   1.5
+Amplitude:    ! 0.0628318530718    # default is 10% delta_g
+num_periods:   6
 delta g:      1
 delta l:      1
 ambient pressure: 1
 liquid density:   1
-# interface location: 1 ! if not specified defualt is dy/2
+interface location: ! 0 ! if not specified defualt is dy/2
 
 ###########################################
 ##### CONDITIONS FOR PARZIALE Ms=5.12 #####
