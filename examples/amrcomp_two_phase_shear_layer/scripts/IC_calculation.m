@@ -9,14 +9,19 @@ density_ratio = 1000;   % rho_l / rho_g
 Mach_gas = 0.6;         % U_g / c_g
 gamma_g = 1.4;
 gamma_l = 4.4;
+PinfL = 6000;
+PL = 1;
+rhoL = 1;
 % grid / sim params
-ny = 64;
-Ly = 12;
+alpha = 1.5;
+num_per = 6;
+nx = 256;
+Ly = 6*pi;
+Lx = 2*num_per*pi/alpha;
 amr = 0;
-
-
-%numb_points = 2*ny;
-numb_points = 10000;
+ny = 3*alpha*nx/num_per;
+LSS = sqrt(gamma_l*(PinfL+PL)/rhoL);
+CFL = 0.25;
 
 %%%%%%%%%%%%% end of inputs %%%%%%%%%%%%%
 
@@ -39,5 +44,11 @@ disp(' ')
 
 
 
+dt_x = CFL*Lx / (nx * 2^amr * (U_l+LSS) );
+dt_y = CFL*Ly / (ny * 2^amr * (LSS) );
+
+fprintf('dt_x: %.10f\n', dt_x);
+fprintf('dt_y: %.10e\n', dt_y);
+fprintf('ny: %.10f\n', ny);
 
 
