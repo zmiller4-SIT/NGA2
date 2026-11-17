@@ -43,7 +43,9 @@ CPUS_PER_JOB=1   # 1 core per job
 
       # Run job on 1 CPU
       ## mpirun -n "$CPUS_PER_JOB" "$CURRENT_DIR/$EXE" -i input_used -v 2 > log.out 2>&1
-      mpirun -n "$CPUS_PER_JOB" "$CURRENT_DIR/$EXE" -i input_used -v 2 < /dev/null > log.out 2>&1
+      # mpirun -n "$CPUS_PER_JOB" "$CURRENT_DIR/$EXE" -i input_used -v 2 < /dev/null > log.out 2>&1
+      # use mpirun below to not have all jobs share a core
+      mpirun -n "$CPUS_PER_JOB" --bind-to none "$CURRENT_DIR/$EXE" -i input_used -v 2 < /dev/null > log.out 2>&1
 
       echo "Completed case: $CASE_NAME"
     ) &
